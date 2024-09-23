@@ -5,10 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
 import { toast } from "react-toastify"
+import { IPokemonRecord } from "../../../models/colyseus-models/game-record"
 import { IUserMetadata } from "../../../models/mongo-models/user-metadata"
 import AfterGameState from "../../../rooms/states/after-game-state"
 import GameState from "../../../rooms/states/game-state"
 import {
+  IAfterGamePlayer,
   IBoardEvent,
   IDps,
   IDragDropCombineMessage,
@@ -24,6 +26,7 @@ import { RequiredStageLevelForXpElligibility } from "../../../types/Config"
 import { DungeonDetails } from "../../../types/enum/Dungeon"
 import { Team } from "../../../types/enum/Game"
 import { Pkm } from "../../../types/enum/Pokemon"
+import { Synergy } from "../../../types/enum/Synergy"
 import { getFreeSpaceOnBench } from "../../../utils/board"
 import { logger } from "../../../utils/logger"
 import { addWanderingPokemon } from "../game/components/pokemon"
@@ -72,7 +75,7 @@ import GameToasts from "./component/game/game-toasts"
 import { MainSidebar } from "./component/main-sidebar/main-sidebar"
 import { playMusic, preloadMusic } from "./utils/audio"
 import { LocalStoreKeys, localStore } from "./utils/store"
-import { FIREBASE_CONFIG } from "./utils/utils"
+import { FIREBASE_CONFIG, getPortraitPath } from "./utils/utils"
 
 let gameContainer: GameContainer
 
@@ -81,7 +84,9 @@ export function getGameContainer(): GameContainer {
 }
 
 export function getGameScene(): GameScene | undefined {
-  return gameContainer?.game?.scene?.getScene<GameScene>("gameScene")
+  return gameContainer?.game?.scene?.getScene<GameScene>("gameScene") as
+    | GameScene
+    | undefined
 }
 
 export default function Game() {
@@ -116,8 +121,8 @@ export default function Game() {
         `connectToGame attempt ${attempts} / ${MAX_ATTEMPS_RECONNECT}`
       )
       const cachedReconnectionToken = localStore.get(
-        LocalStoreKeys.RECONNECTION_TOKEN
-      )
+        LocalStoreKeys.RECONNECTION_GAME
+      )?.reconnectionToken
       if (cachedReconnectionToken) {
         connecting.current = true
         const statusMessage = document.querySelector("#status-message")
@@ -130,11 +135,13 @@ export default function Game() {
           .then((room: Room) => {
             // store game token for 1 hour
             localStore.set(
-              LocalStoreKeys.RECONNECTION_TOKEN,
-              room.reconnectionToken,
+              LocalStoreKeys.RECONNECTION_GAME,
+              {
+                reconnectionToken: room.reconnectionToken,
+                roomId: room.roomId
+              },
               60 * 60
             )
-            localStore.set(LocalStoreKeys.RECONNECTION_GAME, room.id, 60 * 60)
             dispatch(joinGame(room))
             connected.current = true
             connecting.current = false
@@ -186,7 +193,7 @@ export default function Game() {
   }
 
   const leave = useCallback(async () => {
-    const savedPlayers = new Array<ISimplePlayer>()
+    const afterPlayers = new Array<IAfterGamePlayer>()
 
     const token = await firebase.auth().currentUser?.getIdToken()
 
@@ -197,9 +204,44 @@ export default function Game() {
     const nbPlayers = room?.state.players.size ?? 0
 
     if (nbPlayers > 0) {
-      room?.state.players.forEach((player) =>
-        savedPlayers.push(gameContainer.transformToSimplePlayer(player))
-      )
+      room?.state.players.forEach((p) => {
+        const afterPlayer: IAfterGamePlayer = {
+          elo: p.elo,
+          name: p.name,
+          id: p.id,
+          rank: p.rank,
+          avatar: p.avatar,
+          title: p.title,
+          role: p.role,
+          pokemons: new Array<IPokemonRecord>(),
+          synergies: new Array<{ name: Synergy; value: number }>(),
+          moneyEarned: p.totalMoneyEarned,
+          playerDamageDealt: p.totalPlayerDamageDealt,
+          rerollCount: p.rerollCount
+        }
+
+        const allSynergies = new Array<{ name: Synergy; value: number }>()
+        p.synergies.forEach((v, k) => {
+          allSynergies.push({ name: k as Synergy, value: v })
+        })
+
+        allSynergies.sort((a, b) => b.value - a.value)
+        afterPlayer.synergies = allSynergies.slice(0, 5)
+
+        if (p.board && p.board.size > 0) {
+          p.board.forEach((pokemon) => {
+            if (pokemon.positionY != 0) {
+              afterPlayer.pokemons.push({
+                avatar: getPortraitPath(pokemon),
+                items: pokemon.items.toArray(),
+                name: pokemon.name
+              })
+            }
+          })
+        }
+
+        afterPlayers.push(afterPlayer)
+      })
     }
 
     const elligibleToXP =
@@ -208,35 +250,38 @@ export default function Game() {
     const elligibleToELO =
       elligibleToXP &&
       !room?.state.noElo &&
-      savedPlayers.filter((p) => p.role !== Role.BOT).length >= 4
+      afterPlayers.filter((p) => p.role !== Role.BOT).length >= 4
 
     const r: Room<AfterGameState> = await client.create("after-game", {
-      players: savedPlayers,
+      players: afterPlayers,
       idToken: token,
       elligibleToXP,
       elligibleToELO
     })
-    localStore.set(LocalStoreKeys.RECONNECTION_TOKEN, r.reconnectionToken, 30)
-    r.connection.close()
+    localStore.set(
+      LocalStoreKeys.RECONNECTION_AFTER_GAME,
+      { reconnectionToken: r.reconnectionToken, roomId: r.roomId },
+      30
+    )
+    if (r.connection.isOpen) {
+      await r.leave(false)
+    }
     dispatch(leaveGame())
     navigate("/after")
-
-    try {
-      await room?.leave()
-    } catch (error) {
-      logger.warn("Room already closed")
+    if (room?.connection.isOpen) {
+      room.leave()
     }
   }, [client, dispatch, room])
 
   useEffect(() => {
     // create a history entry to prevent back button switching page immediately, and leave game properly instead
-    window.history.pushState(null, "", window.location.href);
+    window.history.pushState(null, "", window.location.href)
     const confirmLeave = () => {
       if (confirm("Do you want to leave game ?")) {
         leave()
       } else {
         // push again another entry to prevent back button from switching page, effectively canceling the back action
-        window.history.pushState(null, "", window.location.href);
+        window.history.pushState(null, "", window.location.href)
       }
     }
     // when pressing back button, properly leave game
@@ -313,7 +358,10 @@ export default function Game() {
       })
       room.onMessage(Transfer.SHOW_EMOTE, (message) => {
         const g = getGameScene()
-        if (g?.minigameManager?.pokemons?.size && g.minigameManager.pokemons.size > 0) {
+        if (
+          g?.minigameManager?.pokemons?.size &&
+          g.minigameManager.pokemons.size > 0
+        ) {
           // early return here to prevent showing animation twice
           return g.minigameManager?.showEmote(message.id, message?.emote)
         }
@@ -543,7 +591,12 @@ export default function Game() {
             ]
             fields.forEach((field) => {
               experienceManager.listen(field, (value) => {
-                dispatch(updateExperienceManager({ ...experienceManager, [field]: value } as IExperienceManager))
+                dispatch(
+                  updateExperienceManager({
+                    ...experienceManager,
+                    [field]: value
+                  } as IExperienceManager)
+                )
               })
             })
           }
@@ -634,12 +687,16 @@ export default function Game() {
 
         player.pokemonsProposition.onAdd(() => {
           if (player.id == uid) {
-            dispatch(setPokemonProposition(player.pokemonsProposition.map(p => p)))
+            dispatch(
+              setPokemonProposition(player.pokemonsProposition.map((p) => p))
+            )
           }
         })
         player.pokemonsProposition.onRemove(() => {
           if (player.id == uid) {
-            dispatch(setPokemonProposition(player.pokemonsProposition.map(p => p)))
+            dispatch(
+              setPokemonProposition(player.pokemonsProposition.map((p) => p))
+            )
           }
         })
       })

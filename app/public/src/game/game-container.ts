@@ -24,7 +24,6 @@ import {
   IPlayer,
   IPokemon,
   IPokemonEntity,
-  ISimplePlayer,
   Transfer
 } from "../../../types"
 import { Ability } from "../../../types/enum/Ability"
@@ -35,12 +34,11 @@ import {
   PokemonActionState,
   Rarity
 } from "../../../types/enum/Game"
-import { Synergy } from "../../../types/enum/Synergy"
 import { Weather } from "../../../types/enum/Weather"
 import { logger } from "../../../utils/logger"
 import { clamp, max } from "../../../utils/number"
 import { SOUNDS, playSound } from "../pages/utils/audio"
-import { getPath, transformCoordinate } from "../pages/utils/utils"
+import { transformCoordinate } from "../pages/utils/utils"
 import { loadPreferences, preferences } from "../preferences"
 import store from "../stores"
 import { changePlayer, setPlayer, setSimulation } from "../stores/GameStore"
@@ -374,11 +372,10 @@ class GameContainer {
 
     const listenForPokemonChanges = (pokemon: Pokemon) => {
       pokemon.onChange(() => {
-        const fields: NonFunctionPropNames<Pokemon>[] = [
+        const fields: NonFunctionPropNames<IPokemon>[] = [
           "positionX",
           "positionY",
           "action",
-          "types",
           "hp",
           "atk",
           "ap"
@@ -386,7 +383,12 @@ class GameContainer {
         fields.forEach((field) => {
           pokemon.listen(field, (value, previousValue) => {
             if (field && player.id === this.spectatedPlayerId) {
-              this.gameScene?.board?.changePokemon(pokemon, field, value)
+              this.gameScene?.board?.changePokemon(
+                pokemon,
+                field,
+                value as IPokemon[typeof field],
+                previousValue as IPokemon[typeof field]
+              )
             }
           })
         })
@@ -634,43 +636,6 @@ class GameContainer {
 
   onDragDropItem(event: CustomEvent<IDragDropItemMessage>) {
     this.room.send(Transfer.DRAG_DROP_ITEM, event.detail)
-  }
-
-  transformToSimplePlayer(player: IPlayer): ISimplePlayer {
-    const simplePlayer = {
-      elo: player.elo,
-      name: player.name,
-      id: player.id,
-      rank: player.rank,
-      avatar: player.avatar,
-      title: player.title,
-      role: player.role,
-      pokemons: new Array<IPokemonRecord>(),
-      synergies: new Array<{ name: Synergy; value: number }>()
-    }
-
-    const allSynergies = new Array<{ name: Synergy; value: number }>()
-    player.synergies.forEach((v, k) => {
-      allSynergies.push({ name: k as Synergy, value: v })
-    })
-
-    allSynergies.sort((a, b) => b.value - a.value)
-
-    simplePlayer.synergies = allSynergies.slice(0, 5)
-
-    if (player.board && player.board.size > 0) {
-      player.board.forEach((pokemon) => {
-        if (pokemon.positionY != 0) {
-          simplePlayer.pokemons.push({
-            avatar: getPath(pokemon),
-            items: pokemon.items.toArray(),
-            name: pokemon.name
-          })
-        }
-      })
-    }
-
-    return simplePlayer
   }
 }
 

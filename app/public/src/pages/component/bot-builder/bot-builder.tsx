@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router"
-import { Navigate, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 import {
   IBot,
   IDetailledPokemon
@@ -13,7 +13,6 @@ import { max, min } from "../../../../../utils/number"
 import { useAppDispatch, useAppSelector } from "../../../hooks"
 import store from "../../../stores"
 import { getAvatarString } from "../../../utils"
-import { joinLobbyRoom } from "../../lobby"
 import DiscordButton from "../buttons/discord-button"
 import {
   DEFAULT_BOT_STATE,
@@ -30,7 +29,10 @@ import ImportBotModal from "./import-bot-modal"
 import ExportBotModal from "./export-bot-modal"
 import ScoreIndicator from "./score-indicator"
 import TeamBuilder from "./team-builder"
+import { joinLobbyRoom } from "../../../game/lobby-logic"
 import "./bot-builder.css"
+import { CloseCodesMessages } from "../../../../../types/enum/CloseCodes"
+import { setErrorAlertMessage } from "../../../stores/NetworkStore"
 
 export default function BotBuilder() {
   const { t } = useTranslation()
@@ -41,7 +43,7 @@ export default function BotBuilder() {
   const [bot, setBot] = useState<IBot>(DEFAULT_BOT_STATE)
   const [currentModal, setCurrentModal] = useState<"import" | "export" | null>(null)
   const [violation, setViolation] = useState<string>()
-  const displayName = useAppSelector((state) => state.lobby.user?.name)
+  const user = useAppSelector((state) => state.network.profile)
 
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
@@ -54,18 +56,13 @@ export default function BotBuilder() {
     }
   })
 
-  const [toAuth, setToAuth] = useState<boolean>(false)
   const lobbyJoined = useRef<boolean>(false)
   useEffect(() => {
-    const client = store.getState().network.client
     if (!lobbyJoined.current) {
-      joinLobbyRoom(dispatch, client).catch((err) => {
-        logger.error(err)
-        setToAuth(true)
-      })
+      joinLobbyRoom(dispatch, navigate)
       lobbyJoined.current = true
     }
-  }, [lobbyJoined, dispatch])
+  }, [lobbyJoined])
 
   useEffect(() => {
     const botId = queryParams.get("bot")
@@ -97,7 +94,7 @@ export default function BotBuilder() {
       // automatically copy from last step
       updateStep(structuredClone(bot.steps[currentStage - 1].board))
     }
-  }, [currentStage])
+  }, [currentStage, bot.steps])
 
   function importBot(text: string) {
     try {
@@ -124,7 +121,7 @@ export default function BotBuilder() {
     }
     setBot({
       ...bot,
-      author: displayName ?? "Anonymous",
+      author: user?.displayName ?? "Anonymous",
       elo: estimateElo(bot)
     })
   }
@@ -149,10 +146,8 @@ export default function BotBuilder() {
   const powerScore = useMemo(() => getPowerScore(board), [board])
   const powerEvaluation = useMemo(
     () => getPowerEvaluation(powerScore, currentStage),
-    [board, currentStage]
+    [powerScore, currentStage]
   )
-
-  const user = useAppSelector((state) => state.lobby.user)
 
   useEffect(() => {
     setViolation(undefined)
@@ -164,8 +159,6 @@ export default function BotBuilder() {
       }
     }
   }, [board, currentStage])
-
-  if (toAuth) return navigate("/")
 
   return (
     <div id="bot-builder">
@@ -196,7 +189,7 @@ export default function BotBuilder() {
         >
           {t("export")}
         </button>
-        <DiscordButton channel="bot-creation" />
+        <DiscordButton url={"https://discord.com/channels/737230355039387749/914503292875325461"} />
       </header>
       <div className="step-info my-container">
         <div className="step-control">

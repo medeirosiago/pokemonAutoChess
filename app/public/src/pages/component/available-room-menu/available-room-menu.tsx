@@ -3,7 +3,6 @@ import firebase from "firebase/compat/app"
 import React, { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
-import { ILobbyUser } from "../../../../../models/colyseus-models/lobby-user"
 import PreparationState from "../../../../../rooms/states/preparation-state"
 import {
   ICustomLobbyState,
@@ -34,11 +33,7 @@ export default function AvailableRoomMenu() {
     (state) => state.network.lobby
   )
   const uid: string = useAppSelector((state) => state.network.uid)
-  const user = useAppSelector((state) => state.lobby.user)
-  const isFreshNewUser =
-    user &&
-    user.anonymous &&
-    Date.now() - new Date(user.creationTime).getTime() < 10 * 60 * 1000
+  const user = useAppSelector((state) => state.network.profile)
   const [isJoining, setJoining] = useState<boolean>(false)
 
   const createRoom = throttle(async function create(
@@ -49,7 +44,7 @@ export default function AvailableRoomMenu() {
       const firebaseUser = firebase.auth().currentUser
       const token = await firebaseUser?.getIdToken()
       if (token && user) {
-        const name = user.name ?? "Player"
+        const name = user.displayName ?? "Player"
         const room: Room<PreparationState> = await client.create(
           "preparation",
           {
@@ -62,13 +57,15 @@ export default function AvailableRoomMenu() {
                 : `${name}'${name.endsWith("s") ? "" : "s"} room`
           }
         )
-        await lobby.leave()
-        room.connection.close()
         localStore.set(
-          LocalStoreKeys.RECONNECTION_TOKEN,
-          room.reconnectionToken,
+          LocalStoreKeys.RECONNECTION_PREPARATION,
+          { reconnectionToken: room.reconnectionToken, roomId: room.roomId },
           30
         )
+        await Promise.allSettled([
+          lobby.connection.isOpen && lobby.leave(false),
+          room.connection.isOpen && room.leave(false)
+        ])
         dispatch(leaveLobby())
         navigate("/preparation")
       }
@@ -110,12 +107,14 @@ export default function AvailableRoomMenu() {
             }
           )
           localStore.set(
-            LocalStoreKeys.RECONNECTION_TOKEN,
-            room.reconnectionToken,
+            LocalStoreKeys.RECONNECTION_PREPARATION,
+            { reconnectionToken: room.reconnectionToken, roomId: room.roomId },
             30
           )
-          await lobby.leave()
-          room.connection.close()
+          await Promise.allSettled([
+            lobby.connection.isOpen && lobby.leave(false),
+            room.connection.isOpen && room.leave(false)
+          ])
           dispatch(leaveLobby())
           navigate("/preparation")
         } catch (error) {
@@ -126,13 +125,41 @@ export default function AvailableRoomMenu() {
   }, 1000)
 
   const quickPlay = throttle(async function quickPlay() {
+    const reconnectToken: string = localStore.get(
+      LocalStoreKeys.RECONNECTION_PREPARATION
+    )?.reconnectionToken
+    if (reconnectToken) {
+      try {
+        const room: Room<PreparationState> =
+          await client.reconnect(reconnectToken)
+        if (room.state.gameMode === GameMode.QUICKPLAY) {
+          localStore.set(
+            LocalStoreKeys.RECONNECTION_PREPARATION,
+            { reconnectionToken: room.reconnectionToken, roomId: room.roomId },
+            30
+          )
+          if (room.connection.isOpen) {
+            await room.leave(false)
+          }
+          navigate("/preparation")
+          return
+        } else if (room.connection.isOpen) {
+          await room.leave(false)
+        }
+      } catch (error) {
+        localStore.delete(LocalStoreKeys.RECONNECTION_PREPARATION)
+      }
+    }
+
     const existingQuickPlayRoom = preparationRooms.find(
-      (room) => room.metadata?.gameMode === GameMode.QUICKPLAY
+      (room) =>
+        room.metadata?.gameMode === GameMode.QUICKPLAY &&
+        room.clients < MAX_PLAYERS_PER_GAME
     )
     if (existingQuickPlayRoom) {
-      joinPrepRoom(existingQuickPlayRoom)
+      await joinPrepRoom(existingQuickPlayRoom)
     } else {
-      createRoom(GameMode.QUICKPLAY)
+      await createRoom(GameMode.QUICKPLAY)
     }
   }, 1000)
 
@@ -148,7 +175,7 @@ export default function AvailableRoomMenu() {
           <ul>
             {preparationRooms.map((r) => (
               <li key={r.roomId}>
-                <RoomItem room={r} click={joinPrepRoom} />
+                <RoomItem room={r} click={(room) => joinPrepRoom(room)} />
               </li>
             ))}
           </ul>
@@ -160,7 +187,6 @@ export default function AvailableRoomMenu() {
           </button>
           <button
             onClick={() => createRoom()}
-            disabled={isFreshNewUser}
             className="bubbly blue create-room-button"
           >
             {t("create_custom_room")}

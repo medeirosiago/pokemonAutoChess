@@ -139,8 +139,8 @@ export const BoosterRarityProbability: { [key in Rarity]: number } = {
 }
 
 export const DITTO_RATE = 0.005
-export const KECLEON_RATE = 1/100
-export const ARCEUS_RATE = 1/100
+export const KECLEON_RATE = 1 / 100
+export const ARCEUS_RATE = 1 / 100
 
 export const AttackTypeColor: { [key in AttackType] } = {
   [AttackType.PHYSICAL]: "#FF6E55",
@@ -256,7 +256,17 @@ export const UniqueShop = new Array<PkmProposition>(
   Pkm.STONJOURNER,
   Pkm.CRAMORANT,
   Pkm.PYUKUMUKU,
-  Pkm.POIPOLE
+  Pkm.POIPOLE,
+  Pkm.LUVDISC,
+  Pkm.AUDINO,
+  Pkm.MANTYKE,
+  Pkm.DURANT,
+  Pkm.SKARMORY,
+  Pkm.SIGILYPH,
+  Pkm.OGERPON_TEAL,
+  Pkm.OGERPON_WELLSPRING,
+  Pkm.OGERPON_HEARTHFLAME,
+  Pkm.OGERPON_CORNERSTONE
 )
 
 export const LegendaryShop = new Array<PkmProposition>(
@@ -307,7 +317,8 @@ export const LegendaryShop = new Array<PkmProposition>(
   Pkm.THUNDURUS,
   Pkm.LANDORUS,
   Pkm.ENAMORUS,
-  Pkm.MAGEARNA
+  Pkm.MAGEARNA,
+  Pkm.MELMETAL
 )
 
 export const NB_UNIQUE_PROPOSITIONS = 6
@@ -349,10 +360,14 @@ export const FishRarityProbability: {
   }
 }
 
+export const MAX_POOL_CONNECTIONS_SIZE = 16
+export const MAX_CONCURRENT_PLAYERS_ON_SERVER = 700
+export const MAX_CONCURRENT_PLAYERS_ON_LOBBY = 75
 export const MAX_PLAYERS_PER_GAME = 8
 export const MIN_HUMAN_PLAYERS = process.env.MIN_HUMAN_PLAYERS
   ? parseInt(process.env.MIN_HUMAN_PLAYERS)
   : 1
+export const INACTIVITY_TIMEOUT = 60 * 1000 * 10
 
 export const DEFAULT_ATK_SPEED = 0.75
 export const DEFAULT_CRIT_CHANCE = 10
@@ -585,7 +600,7 @@ export const ItemStats: Record<Item, { [stat in Stat]?: number }> = {
   [Item.CHOICE_SPECS]: { [Stat.AP]: 100 },
   [Item.SOUL_DEW]: { [Stat.AP]: 10, [Stat.PP]: 15 },
   [Item.UPGRADE]: { [Stat.AP]: 10, [Stat.ATK_SPEED]: 10 },
-  [Item.REAPER_CLOTH]: { [Stat.AP]: 10, [Stat.CRIT_CHANCE]: 15 },
+  [Item.REAPER_CLOTH]: { [Stat.AP]: 10, [Stat.CRIT_CHANCE]: 20 },
   [Item.POKEMONOMICON]: { [Stat.AP]: 10, [Stat.SHIELD]: 15 },
   [Item.POWER_LENS]: { [Stat.AP]: 10, [Stat.SPE_DEF]: 5 },
   [Item.SHELL_BELL]: { [Stat.AP]: 10, [Stat.ATK]: 3 },
@@ -615,7 +630,7 @@ export const ItemStats: Record<Item, { [stat in Stat]?: number }> = {
   [Item.KINGS_ROCK]: { [Stat.SHIELD]: 100 },
   [Item.SHINY_CHARM]: { [Stat.SHIELD]: 15, [Stat.SPE_DEF]: 2 },
   [Item.SOOTHE_BELL]: { [Stat.SHIELD]: 15, [Stat.ATK]: 3 },
-  [Item.FLAME_ORB]: { [Stat.SHIELD]: 15, [Stat.DEF]: 2 },
+  [Item.FLAME_ORB]: { [Stat.SHIELD]: 30, [Stat.DEF]: 2 },
   [Item.ASSAULT_VEST]: { [Stat.SPE_DEF]: 20 },
   [Item.AMULET_COIN]: { [Stat.SPE_DEF]: 2, [Stat.ATK]: 3 },
   [Item.POKE_DOLL]: { [Stat.SPE_DEF]: 2, [Stat.DEF]: 2 },
@@ -656,7 +671,7 @@ export const ItemStats: Record<Item, { [stat in Stat]?: number }> = {
     [Stat.DEF]: 5,
     [Stat.SPE_DEF]: 5
   },
-  [Item.INCENSE]: { [Stat.SPE_DEF]: 5 },
+  [Item.INCENSE]: { [Stat.SPE_DEF]: 5, [Stat.AP]: 30 },
   [Item.EXP_SHARE]: {},
   [Item.METEORITE]: {},
   [Item.BERRY_JUICE]: {},
@@ -675,9 +690,9 @@ export const ItemStats: Record<Item, { [stat in Stat]?: number }> = {
     [Stat.DEF]: 5,
     [Stat.SPE_DEF]: 5
   },
-  [Item.GOLD_BOTTLE_CAP]: {},
+  [Item.GOLD_BOTTLE_CAP]: { [Stat.CRIT_CHANCE]: 20, [Stat.CRIT_POWER]: 0.4 },
   [Item.SACRED_ASH]: {},
-  [Item.COMET_SHARD]: { [Stat.ATK]: 10 },
+  [Item.COMET_SHARD]: { [Stat.ATK]: 12 },
   [Item.ABSORB_BULB]: { [Stat.DEF]: 8, [Stat.SPE_DEF]: 8 },
   [Item.WHITE_FLUTE]: {},
   [Item.DAMP_ROCK]: {},
@@ -686,7 +701,12 @@ export const ItemStats: Record<Item, { [stat in Stat]?: number }> = {
   [Item.SMOOTH_ROCK]: {},
   [Item.BLACK_AUGURITE]: {},
   [Item.POKERUS_VIAL]: {},
-  [Item.ROTOM_PHONE]: {}
+  [Item.ROTOM_PHONE]: {},
+  [Item.FIRE_SHARD]: {},
+  [Item.TEAL_MASK]: { [Stat.SHIELD]: 50 },
+  [Item.WELLSPRING_MASK]: { [Stat.SHIELD]: 50 },
+  [Item.CORNERSTONE_MASK]: { [Stat.SHIELD]: 50 },
+  [Item.HEARTHFLAME_MASK]: { [Stat.SHIELD]: 50 }
 }
 
 export type TilesetExchangeFile = {
@@ -737,5 +757,9 @@ export const TOURNAMENT_REGISTRATION_TIME = 60 * 60 * 1000 // 1 hour
 export const TOURNAMENT_CLEANUP_DELAY = 24 * 60 * 60 * 1000 // 1 day
 
 export const MAX_SIMULATION_DELTA_TIME = 50 // milliseconds
+
+export const CRON_ELO_DECAY_DELAY = 86400 * 1000 * 10 // 10 days
+export const CRON_ELO_DECAY_MINIMUM_ELO = 1100
+export const CRON_HISTORY_CLEANUP_DELAY = 86400 * 1000 * 30 // 30 days
 
 export { EloRank }

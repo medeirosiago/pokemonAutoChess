@@ -5,7 +5,7 @@ import ItemFactory from "../models/item-factory"
 import PokemonFactory from "../models/pokemon-factory"
 import { getPokemonData } from "../models/precomputed/precomputed-pokemon-data"
 import { PRECOMPUTED_POKEMONS_PER_TYPE } from "../models/precomputed/precomputed-types"
-import { getPath } from "../public/src/pages/utils/utils"
+import { getPortraitPath } from "../public/src/pages/utils/utils"
 import GameRoom from "../rooms/game-room"
 import { IPokemon, IPokemonEntity, ISimulation, Transfer } from "../types"
 import { BOARD_HEIGHT, BOARD_WIDTH, ItemStats } from "../types/Config"
@@ -27,11 +27,17 @@ import { Synergy } from "../types/enum/Synergy"
 import { Weather, WeatherEffects } from "../types/enum/Weather"
 import { IPokemonData } from "../types/interfaces/PokemonData"
 import { logger } from "../utils/logger"
-import { pickRandomIn, randomBetween, shuffleArray } from "../utils/random"
+import {
+  chance,
+  pickRandomIn,
+  randomBetween,
+  shuffleArray
+} from "../utils/random"
 import { values } from "../utils/schemas"
 import Board from "./board"
 import Dps from "./dps"
 import { PokemonEntity, getStrongestUnit, getUnitScore } from "./pokemon-entity"
+import { DelayedCommand } from "./simulation-command"
 
 export default class Simulation extends Schema implements ISimulation {
   @type("string") weather: Weather = Weather.NEUTRAL
@@ -281,12 +287,12 @@ export default class Simulation extends Schema implements ISimulation {
     )
 
     if (team == Team.BLUE_TEAM) {
-      const dps = new Dps(pokemonEntity.id, getPath(pokemonEntity))
+      const dps = new Dps(pokemonEntity.id, getPortraitPath(pokemonEntity))
       this.blueTeam.set(pokemonEntity.id, pokemonEntity)
       this.blueDpsMeter.set(pokemonEntity.id, dps)
     }
     if (team == Team.RED_TEAM) {
-      const dps = new Dps(pokemonEntity.id, getPath(pokemonEntity))
+      const dps = new Dps(pokemonEntity.id, getPortraitPath(pokemonEntity))
       this.redTeam.set(pokemonEntity.id, pokemonEntity)
       this.redDpsMeter.set(pokemonEntity.id, dps)
     }
@@ -468,7 +474,7 @@ export default class Simulation extends Schema implements ISimulation {
     }
 
     if (item === Item.DYNAMAX_BAND) {
-      pokemon.addMaxHP(3 * pokemon.hp, pokemon, 0, false)
+      pokemon.addMaxHP(2.5 * pokemon.hp, pokemon, 0, false)
     }
 
     if (item === Item.GOLD_BOTTLE_CAP && pokemon.player) {
@@ -498,8 +504,8 @@ export default class Simulation extends Schema implements ISimulation {
       )
     }
 
-    if (pokemon.types.has(Synergy.WATER)) {
-      pokemon.addDodgeChance(0.2, pokemon, 0, false)
+    if (pokemon.types.has(Synergy.GHOST)) {
+      pokemon.addDodgeChance(0.25, pokemon, 0, false)
     }
   }
 
@@ -608,8 +614,29 @@ export default class Simulation extends Schema implements ISimulation {
               if (value.atk > pokemon.atk) pokemon.atk = value.atk
               if (value.def > pokemon.def) pokemon.def = value.def
               if (value.speDef > pokemon.speDef) pokemon.speDef = value.speDef
+              if (value.ap > pokemon.ap) pokemon.ap = value.ap
             }
           })
+        }
+
+        if (pokemon.passive === Passive.LUVDISC) {
+          const lovers = [-1, 1].map((offset) =>
+            this.board.getValue(pokemon.positionX + offset, pokemon.positionY)
+          )
+          if (lovers[0] && lovers[1]) {
+            const bestAtk = Math.max(lovers[0].atk, lovers[1].atk)
+            const bestDef = Math.max(lovers[0].def, lovers[1].def)
+            const bestSpeDef = Math.max(lovers[0].speDef, lovers[1].speDef)
+            const bestAP = Math.max(lovers[0].ap, lovers[1].ap)
+            lovers[0].atk = bestAtk
+            lovers[1].atk = bestAtk
+            lovers[0].def = bestDef
+            lovers[1].def = bestDef
+            lovers[0].speDef = bestSpeDef
+            lovers[1].speDef = bestSpeDef
+            lovers[0].ap = bestAP
+            lovers[1].ap = bestAP
+          }
         }
 
         if (pokemon.items.has(Item.WHITE_FLUTE)) {
@@ -673,43 +700,63 @@ export default class Simulation extends Schema implements ISimulation {
         }
 
         if (pokemon.items.has(Item.COMET_SHARD)) {
-          setTimeout(() => {
-            const farthestCoordinate =
-              this.board.getFarthestTargetCoordinateAvailablePlace(pokemon)
-            if (farthestCoordinate) {
-              const target = farthestCoordinate.target as PokemonEntity
-              pokemon.skydiveTo(
-                farthestCoordinate.x,
-                farthestCoordinate.y,
-                this.board
-              )
-              pokemon.targetX = target.positionX
-              pokemon.targetY = target.positionY
-              pokemon.status.triggerProtect(3000)
-              setTimeout(() => {
-                pokemon.simulation.room.broadcast(Transfer.ABILITY, {
-                  id: pokemon.simulation.id,
-                  skill: "COMET_CRASH",
-                  positionX: farthestCoordinate.x,
-                  positionY: farthestCoordinate.y,
-                  targetX: target.positionX,
-                  targetY: target.positionY
-                })
-              }, 500)
+          pokemon.commands.push(
+            new DelayedCommand(() => {
+              const farthestCoordinate =
+                this.board.getFarthestTargetCoordinateAvailablePlace(pokemon)
+              if (farthestCoordinate) {
+                const target = farthestCoordinate.target as PokemonEntity
+                pokemon.skydiveTo(
+                  farthestCoordinate.x,
+                  farthestCoordinate.y,
+                  this.board
+                )
+                pokemon.targetX = target.positionX
+                pokemon.targetY = target.positionY
+                pokemon.status.triggerProtect(3000)
+                pokemon.commands.push(
+                  new DelayedCommand(() => {
+                    pokemon.simulation.room.broadcast(Transfer.ABILITY, {
+                      id: pokemon.simulation.id,
+                      skill: "COMET_CRASH",
+                      positionX: farthestCoordinate.x,
+                      positionY: farthestCoordinate.y,
+                      targetX: target.positionX,
+                      targetY: target.positionY
+                    })
+                  }, 500)
+                )
 
-              setTimeout(() => {
-                if (target?.life > 0) {
-                  target.handleSpecialDamage(
-                    3 * pokemon.atk,
-                    this.board,
-                    AttackType.SPECIAL,
-                    pokemon as PokemonEntity,
-                    false
-                  )
-                }
-              }, 1000)
-            }
-          }, 100)
+                pokemon.commands.push(
+                  new DelayedCommand(() => {
+                    if (target?.life > 0) {
+                      const crit = chance(pokemon.critChance / 100)
+                      target.handleSpecialDamage(
+                        3 * pokemon.atk,
+                        this.board,
+                        AttackType.SPECIAL,
+                        pokemon as PokemonEntity,
+                        crit
+                      )
+                      this.board
+                        .getAdjacentCells(target.positionX, target.positionY)
+                        .forEach((cell) => {
+                          if (cell.value && cell.value.team !== pokemon.team) {
+                            cell.value.handleSpecialDamage(
+                              pokemon.atk,
+                              this.board,
+                              AttackType.SPECIAL,
+                              pokemon as PokemonEntity,
+                              crit
+                            )
+                          }
+                        })
+                    }
+                  }, 1000)
+                )
+              }
+            }, 100)
+          )
         }
 
         if (pokemon.passive === Passive.SPOT_PANDA) {
@@ -1461,8 +1508,10 @@ export default class Simulation extends Schema implements ISimulation {
       )
 
       if (this.winnerId === this.redPlayerId) {
-        this.redPlayer.money += 1
-        client?.send(Transfer.PLAYER_INCOME, 1)
+        if (this.bluePlayerId !== "pve") {
+          this.redPlayer.addMoney(1)
+          client?.send(Transfer.PLAYER_INCOME, 1)
+        }
       } else {
         const playerDamage = this.room.computeRoundDamage(
           this.blueTeam,
@@ -1471,6 +1520,9 @@ export default class Simulation extends Schema implements ISimulation {
         this.redPlayer.life -= playerDamage
         if (playerDamage > 0) {
           client?.send(Transfer.PLAYER_DAMAGE, playerDamage)
+        }
+        if (this.bluePlayer) {
+          this.bluePlayer.totalPlayerDamageDealt += playerDamage
         }
       }
     }
@@ -1493,8 +1545,10 @@ export default class Simulation extends Schema implements ISimulation {
       )
 
       if (this.winnerId === this.bluePlayerId) {
-        this.bluePlayer.money += 1
-        client?.send(Transfer.PLAYER_INCOME, 1)
+        if (this.redPlayerId !== "pve") {
+          this.bluePlayer.addMoney(1)
+          client?.send(Transfer.PLAYER_INCOME, 1)
+        }
       } else {
         const playerDamage = this.room.computeRoundDamage(
           this.redTeam,
@@ -1503,6 +1557,9 @@ export default class Simulation extends Schema implements ISimulation {
         this.bluePlayer.life -= playerDamage
         if (playerDamage > 0) {
           client?.send(Transfer.PLAYER_DAMAGE, playerDamage)
+        }
+        if (this.redPlayer) {
+          this.redPlayer.totalPlayerDamageDealt += playerDamage
         }
       }
     }
@@ -1623,7 +1680,7 @@ export default class Simulation extends Schema implements ISimulation {
             if (cell.team === Team.RED_TEAM) {
               cell.status.clearNegativeStatus()
               if (cell.types.has(Synergy.AQUATIC)) {
-                cell.handleHeal(waveLevel * 0.05 * cell.hp, cell, 0, false)
+                cell.handleHeal(waveLevel * 0.1 * cell.hp, cell, 0, false)
               }
             } else {
               cell.handleDamage({

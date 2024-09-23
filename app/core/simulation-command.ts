@@ -1,10 +1,10 @@
-import { Transfer } from "../types"
+import { ISimulationCommand, Transfer } from "../types"
 import { Effect } from "../types/enum/Effect"
 import { AttackType } from "../types/enum/Game"
 import Board from "./board"
 import { PokemonEntity } from "./pokemon-entity"
 
-export abstract class SimulationCommand {
+export abstract class SimulationCommand implements ISimulationCommand {
   delay: number
   executed = false
 
@@ -21,7 +21,7 @@ export abstract class SimulationCommand {
   }
 }
 
-export class AbilityCommand extends SimulationCommand {
+export class DelayedCommand extends SimulationCommand {
   delayedFunction: () => void
   constructor(delayedFunction: () => void, delay: number) {
     super(delay)
@@ -35,23 +35,23 @@ export class AbilityCommand extends SimulationCommand {
 
 export class AttackCommand extends SimulationCommand {
   pokemon: PokemonEntity
+  target: PokemonEntity
   board: Board
-  targetCoordinate: { x: number; y: number }
 
   constructor(
     delay: number,
     pokemon: PokemonEntity,
-    board: Board,
-    targetCoordinate: { x: number; y: number }
+    target: PokemonEntity,
+    board: Board
   ) {
     super(delay)
     this.pokemon = pokemon
     this.board = board
-    this.targetCoordinate = targetCoordinate
+    this.target = target
   }
 
   execute(): void {
-    this.pokemon.state.attack(this.pokemon, this.board, this.targetCoordinate)
+    this.pokemon.state.attack(this.pokemon, this.board, this.target)
     if (
       this.pokemon.effects.has(Effect.RISING_VOLTAGE) ||
       this.pokemon.effects.has(Effect.OVERDRIVE) ||
@@ -69,19 +69,11 @@ export class AttackCommand extends SimulationCommand {
       }
       if (isTripleAttack) {
         this.pokemon.count.tripleAttackCount++
-        this.pokemon.state.attack(
-          this.pokemon,
-          this.board,
-          this.targetCoordinate
-        )
-        this.pokemon.state.attack(
-          this.pokemon,
-          this.board,
-          this.targetCoordinate
-        )
+        this.pokemon.state.attack(this.pokemon, this.board, this.target)
+        this.pokemon.state.attack(this.pokemon, this.board, this.target)
         if (isPowerSurge) {
           this.board
-            .getAdjacentCells(this.targetCoordinate.x, this.targetCoordinate.y)
+            .getAdjacentCells(this.target.positionX, this.target.positionY)
             .forEach((cell) => {
               if (cell) {
                 const enemy = this.board.getValue(cell.x, cell.y)
@@ -96,8 +88,8 @@ export class AttackCommand extends SimulationCommand {
                   this.pokemon.simulation.room.broadcast(Transfer.ABILITY, {
                     id: this.pokemon.simulation.id,
                     skill: "LINK_CABLE_link",
-                    positionX: this.targetCoordinate.x,
-                    positionY: this.targetCoordinate.y,
+                    positionX: this.target.positionX,
+                    positionY: this.target.positionY,
                     targetX: enemy.positionX,
                     targetY: enemy.positionY
                   })

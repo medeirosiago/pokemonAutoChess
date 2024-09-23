@@ -12,7 +12,7 @@ import { canSell } from "../../core/pokemon-entity"
 import Simulation from "../../core/simulation"
 import { getLevelUpCost } from "../../models/colyseus-models/experience-manager"
 import Player from "../../models/colyseus-models/player"
-import { isOnBench } from "../../models/colyseus-models/pokemon"
+import { isOnBench, PokemonClasses } from "../../models/colyseus-models/pokemon"
 import { createRandomEgg } from "../../models/egg-factory"
 import PokemonFactory from "../../models/pokemon-factory"
 import { getPokemonData } from "../../models/precomputed/precomputed-pokemon-data"
@@ -54,7 +54,13 @@ import {
   WeatherRocks
 } from "../../types/enum/Item"
 import { Passive } from "../../types/enum/Passive"
-import { Pkm, PkmFamily, PkmIndex, Unowns } from "../../types/enum/Pokemon"
+import {
+  Pkm,
+  PkmFamily,
+  PkmIndex,
+  PkmRegionalVariants,
+  Unowns
+} from "../../types/enum/Pokemon"
 import { SpecialGameRule } from "../../types/enum/SpecialGameRule"
 import { Synergy } from "../../types/enum/Synergy"
 import { removeInArray } from "../../utils/array"
@@ -67,7 +73,7 @@ import {
 } from "../../utils/board"
 import { repeat } from "../../utils/function"
 import { logger } from "../../utils/logger"
-import { max } from "../../utils/number"
+import { max, min } from "../../utils/number"
 import { chance, pickNRandomIn, pickRandomIn } from "../../utils/random"
 import { resetArraySchema, values } from "../../utils/schemas"
 import { getWeather } from "../../utils/weather"
@@ -422,6 +428,57 @@ export class OnDragDropItemCommand extends Command<
     }
 
     if (
+      item === Item.TEAL_MASK ||
+      item === Item.WELLSPRING_MASK ||
+      item === Item.HEARTHFLAME_MASK ||
+      item === Item.CORNERSTONE_MASK
+    ) {
+      if (
+        pokemon.passive === Passive.OGERPON_TEAL ||
+        pokemon.passive === Passive.OGERPON_WELLSPRING ||
+        pokemon.passive === Passive.OGERPON_HEARTHFLAME ||
+        pokemon.passive === Passive.OGERPON_CORNERSTONE
+      ) {
+        if (pokemon.passive === Passive.OGERPON_TEAL) {
+          pokemon.items.delete(Item.TEAL_MASK)
+        } else if (pokemon.passive === Passive.OGERPON_WELLSPRING) {
+          pokemon.items.delete(Item.WELLSPRING_MASK)
+        } else if (pokemon.passive === Passive.OGERPON_HEARTHFLAME) {
+          pokemon.items.delete(Item.HEARTHFLAME_MASK)
+        } else if (pokemon.passive === Passive.OGERPON_CORNERSTONE) {
+          pokemon.items.delete(Item.CORNERSTONE_MASK)
+        }
+
+        if (item === Item.TEAL_MASK) {
+          pokemon.items.add(Item.TEAL_MASK)
+          player.transformPokemon(pokemon, Pkm.OGERPON_TEAL_MASK)
+        } else if (item === Item.WELLSPRING_MASK) {
+          pokemon.items.add(Item.WELLSPRING_MASK)
+          player.transformPokemon(pokemon, Pkm.OGERPON_WELLSPRING_MASK)
+        } else if (item === Item.HEARTHFLAME_MASK) {
+          pokemon.items.add(Item.HEARTHFLAME_MASK)
+          player.transformPokemon(pokemon, Pkm.OGERPON_HEARTHFLAME_MASK)
+        } else if (item === Item.CORNERSTONE_MASK) {
+          pokemon.items.add(Item.CORNERSTONE_MASK)
+          player.transformPokemon(pokemon, Pkm.OGERPON_CORNERSTONE_MASK)
+        }
+      } else {
+        client.send(Transfer.DRAG_DROP_FAILED, message)
+        return
+      }
+    }
+
+    if (item === Item.FIRE_SHARD) {
+      if (pokemon.types.has(Synergy.FIRE)) {
+        pokemon.atk += 2
+        player.life = min(1)(player.life - 2)
+        removeInArray(player.items, item)
+      }
+      client.send(Transfer.DRAG_DROP_FAILED, message)
+      return
+    }
+
+    if (
       item === Item.OLD_ROD ||
       item === Item.GOOD_ROD ||
       item === Item.SUPER_ROD
@@ -588,11 +645,12 @@ export class OnSellDropCommand extends Command<
 
       if (pokemon) {
         this.state.shop.releasePokemon(pokemon.name, player)
-        player.money += getSellPrice(
+        const sellPrice = getSellPrice(
           pokemon.name,
           pokemon.shiny,
           this.state.specialGameRule
         )
+        player.addMoney(sellPrice)
         pokemon.items.forEach((it) => {
           player.items.push(it)
         })
@@ -676,21 +734,12 @@ export class OnPickBerryCommand extends Command<
   }
 }
 
-export class OnJoinCommand extends Command<
-  GameRoom,
-  {
-    client: Client
-    options: { spectate?: boolean }
-    auth
-  }
-> {
-  async execute({ client, options, auth }) {
+export class OnJoinCommand extends Command<GameRoom, { client: Client }> {
+  async execute({ client }) {
     try {
       //logger.debug("onJoin", client.auth.uid)
       const players = values(this.state.players)
-      if (options.spectate === true) {
-        this.state.spectators.add(client.auth.uid)
-      } else if (players.some((p) => p.id === auth.uid)) {
+      if (players.some((p) => p.id === client.auth.uid)) {
         /*logger.info(
           `${client.auth.displayName} (${client.id}) joined game room ${this.room.roomId}`
         )*/
@@ -701,10 +750,7 @@ export class OnJoinCommand extends Command<
           }
         }
       } else {
-        logger.warn(`player not in this game players list tried to join game`, {
-          userId: client.auth.uid,
-          roomId: this.room.roomId
-        })
+        this.state.spectators.add(client.auth.uid)
       }
     } catch (error) {
       logger.error(error)
@@ -975,7 +1021,7 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
         income += player.interest
         income += max(5)(player.streak)
         income += 5
-        player.money += income
+        player.addMoney(income)
         if (income > 0) {
           const client = this.room.clients.find(
             (cli) => cli.auth.uid === player.id
@@ -1042,7 +1088,16 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
           for (let i = 0; i < 3; i++) {
             const p = pool.pop()
             if (p) {
-              player.pokemonsProposition.push(p)
+              // If the Pokemon has a regional variant in the player's region, show that instead of the base form.
+              // Base form will still be added to the pool for all players
+              const regionalVariants = (PkmRegionalVariants[p] ?? []).filter(
+                (pkm) => new PokemonClasses[pkm]().isInRegion(player.map)
+              )
+              if (regionalVariants.length > 0) {
+                player.pokemonsProposition.push(pickRandomIn(regionalVariants))
+              } else {
+                player.pokemonsProposition.push(p)
+              }
               player.itemsProposition.push(items[i])
             }
           }
@@ -1063,6 +1118,18 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
     const commands = new Array<Command>()
 
     this.state.players.forEach((player: Player) => {
+      const fireLevel = player.synergies.get(Synergy.FIRE) ?? 0
+      const fireSynergLevel = SynergyTriggers[Synergy.FIRE].filter(
+        (n) => n <= fireLevel
+      ).length
+      if (
+        fireSynergLevel === 4 &&
+        player.items.includes(Item.FIRE_SHARD) === false &&
+        player.life > 2
+      ) {
+        player.items.push(Item.FIRE_SHARD)
+      }
+
       const bestRod = FishingRods.find((rod) => player.items.includes(rod))
 
       if (bestRod && getFreeSpaceOnBench(player.board) > 0 && !isAfterPVE) {
@@ -1318,7 +1385,7 @@ export class OnUpdatePhaseCommand extends Command<GameRoom> {
 
           const rewardsPropositions = this.state.shinyEncounter
             ? pickNRandomIn(ShinyItems, 3)
-            : pveStage.getRewardsPropositions?.(player) ?? ([] as Item[])
+            : (pveStage.getRewardsPropositions?.(player) ?? ([] as Item[]))
 
           resetArraySchema(player.pveRewardsPropositions, rewardsPropositions)
 

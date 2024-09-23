@@ -65,7 +65,7 @@ import {
 } from "../utils/board"
 import { logger } from "../utils/logger"
 import { shuffleArray } from "../utils/random"
-import { keys, values } from "../utils/schemas"
+import { values } from "../utils/schemas"
 import {
   OnDragDropCombineCommand,
   OnDragDropCommand,
@@ -176,7 +176,7 @@ export default class GameRoom extends Room<GameState> {
         //logger.debug(`init player`, user)
         if (user.isBot) {
           const player = new Player(
-            user.id,
+            user.uid,
             user.name,
             user.elo,
             user.avatar,
@@ -187,7 +187,7 @@ export default class GameRoom extends Room<GameState> {
             Role.BOT,
             this.state
           )
-          this.state.players.set(user.id, player)
+          this.state.players.set(user.uid, player)
           this.state.botManager.addBot(player)
           //this.state.shop.assignShop(player)
         } else {
@@ -519,24 +519,30 @@ export default class GameRoom extends Room<GameState> {
       super.onAuth(client, options, request)
       const token = await admin.auth().verifyIdToken(options.idToken)
       const user = await admin.auth().getUser(token.uid)
-      const isBanned = await BannedUser.findOne({ uid: user.uid })
-      const userProfile = await UserMetadata.findOne({ uid: user.uid })
-      client.send(Transfer.USER_PROFILE, userProfile)
 
       if (!user.displayName) {
-        throw "No display name"
-      } else if (isBanned) {
-        throw "User banned"
-      } else {
-        return user
+        logger.error("No display name for this account", user.uid)
+        throw new Error(
+          "No display name for this account. Please report this error."
+        )
       }
+
+      return user
     } catch (error) {
       logger.error(error)
     }
   }
 
-  onJoin(client: Client, options, auth) {
-    this.dispatcher.dispatch(new OnJoinCommand(), { client, options, auth })
+  async onJoin(client: Client) {
+    const isBanned = await BannedUser.findOne({ uid: client.auth.uid })
+
+    if (isBanned) {
+      throw "Account banned"
+    }
+
+    const userProfile = await UserMetadata.findOne({ uid: client.auth.uid })
+    client.send(Transfer.USER_PROFILE, userProfile)
+    this.dispatcher.dispatch(new OnJoinCommand(), { client })
   }
 
   async onLeave(client: Client, consented: boolean) {
@@ -550,6 +556,9 @@ export default class GameRoom extends Room<GameState> {
 
       // allow disconnected client to reconnect into this room until 3 minutes
       await this.allowReconnection(client, 180)
+      const userProfile = await UserMetadata.findOne({ uid: client.auth.uid })
+      client.send(Transfer.USER_PROFILE, userProfile)
+      this.dispatcher.dispatch(new OnJoinCommand(), { client })
     } catch (e) {
       if (client && client.auth && client.auth.displayName) {
         //logger.info(`${client.auth.displayName} left game`)
@@ -891,7 +900,19 @@ export default class GameRoom extends Room<GameState> {
         )
         if (pokemonEvolved) {
           hasEvolved = true
-          // check item evolution rule after count evolution (example: Clefairy)
+
+          // Drop Rare Candy if no further count based evo
+          if (
+            pokemonEvolved.items.has(Item.RARE_CANDY) &&
+            (pokemonEvolved.evolution === Pkm.DEFAULT ||
+              (pokemonEvolved.evolutionRule &&
+                !(pokemonEvolved.evolutionRule instanceof CountEvolutionRule)))
+          ) {
+            player.items.push(Item.RARE_CANDY)
+            pokemonEvolved.items.delete(Item.RARE_CANDY)
+          }
+
+          // check item evolution rule after count evolution (example: Porygon-2)
           this.checkEvolutionsAfterItemAcquired(playerId, pokemonEvolved)
         }
       }
@@ -974,21 +995,17 @@ export default class GameRoom extends Room<GameState> {
     player.pokemonsProposition.clear()
 
     if (AdditionalPicksStages.includes(this.state.stageLevel)) {
-      this.state.additionalPokemons.push(pkm as Pkm)
-      this.state.shop.addAdditionalPokemon(pkm)
-      if (pkm in PkmRegionalVariants) {
-        const variants: Pkm[] = PkmRegionalVariants[pkm]
-        for (const variant of variants) {
-          if (
-            PokemonClasses[variant].prototype.isInRegion(
-              variant,
-              player.map,
-              this.state
-            )
-          ) {
-            player.regionalPokemons.push(variant)
-          }
-        }
+      // If player picked their regional variant, we need to add the base pokemon to the shop pool
+      if (pokemonsObtained[0]?.regional) {
+        const basePkm = (Object.keys(PkmRegionalVariants).find((p) =>
+          PkmRegionalVariants[p].includes(pokemonsObtained[0].name)
+        ) ?? pokemonsObtained[0].name) as Pkm
+        this.state.additionalPokemons.push(basePkm)
+        this.state.shop.addAdditionalPokemon(basePkm)
+        player.regionalPokemons.push(pkm as Pkm)
+      } else {
+        this.state.additionalPokemons.push(pkm as Pkm)
+        this.state.shop.addAdditionalPokemon(pkm)
       }
 
       if (

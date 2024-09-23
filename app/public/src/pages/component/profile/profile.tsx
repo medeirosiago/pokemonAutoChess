@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Tab, TabList, TabPanel, Tabs } from "react-tabs"
+import { IGameRecord } from "../../../../../models/colyseus-models/game-record"
 import { Role, Title } from "../../../../../types"
 import { useAppDispatch, useAppSelector } from "../../../hooks"
 import { setSearchedUser, setSuggestions } from "../../../stores/LobbyStore"
@@ -9,6 +10,7 @@ import {
   giveBooster,
   giveRole,
   giveTitle,
+  heapSnapshot,
   searchName,
   unban
 } from "../../../stores/NetworkStore"
@@ -25,11 +27,12 @@ import { TitleTab } from "./title-tab"
 export default function Profile() {
   const { t } = useTranslation()
   const dispatch = useAppDispatch()
-  const user = useAppSelector((state) => state.lobby.user)
+  const user = useAppSelector((state) => state.network.profile)
   const suggestions = useAppSelector((state) => state.lobby.suggestions)
   const searchedUser = useAppSelector((state) => state.lobby.searchedUser)
 
   const profile = searchedUser ?? user
+  const [gameHistory, setGameHistory] = useState<IGameRecord[]>([])
 
   function onSearchQueryChange(query: string) {
     if (query) {
@@ -47,8 +50,10 @@ export default function Profile() {
   return (
     <div className="profile-modal">
       <div className="profile-box">
-        <h2>{profile?.name ?? ""} {t("profile")}</h2>
-        {profile && <PlayerBox user={profile} />}
+        <h2>
+          {profile?.displayName ?? ""} {t("profile")}
+        </h2>
+        {profile && <PlayerBox user={profile} history={gameHistory} />}
       </div>
 
       <SearchBar onChange={onSearchQueryChange} />
@@ -63,7 +68,7 @@ export default function Profile() {
         )}
       </div>
 
-      {profile && <History history={profile.history.map(r=>r)} />}
+      {profile && <History uid={profile.uid} onUpdate={setGameHistory} />}
     </div>
   )
 }
@@ -98,7 +103,7 @@ function MyProfileMenu() {
 function OtherProfileActions({ resetSearch }) {
   const { t } = useTranslation()
   const dispatch = useAppDispatch()
-  const role = useAppSelector((state) => state.lobby.user?.role)
+  const role = useAppSelector((state) => state.network.profile?.role)
   const user = useAppSelector((state) => state.lobby.searchedUser)
   const [title, setTitle] = useState<Title>(user?.title || Title.ACE_TRAINER)
   const [profileRole, setProfileRole] = useState<Role>(user?.role ?? Role.BASIC)
@@ -111,12 +116,24 @@ function OtherProfileActions({ resetSearch }) {
           dispatch(
             giveBooster({
               numberOfBoosters: Number(prompt("How many boosters ?")) || 1,
-              uid: user.id
+              uid: user.uid
             })
           )
         }}
       >
         <p style={{ margin: "0px" }}>{t("give_boosters")}</p>
+      </button>
+    ) : null
+
+  const heapSnapshotButton =
+    user && role && role === Role.ADMIN ? (
+      <button
+        className="bubbly red"
+        onClick={() => {
+          dispatch(heapSnapshot())
+        }}
+      >
+        <p style={{ margin: "0px" }}>{t("heap_snapshot")}</p>
       </button>
     ) : null
 
@@ -126,7 +143,7 @@ function OtherProfileActions({ resetSearch }) {
         className="bubbly red"
         onClick={() => {
           const reason = prompt(`Reason for the ban:`)
-          dispatch(ban({ uid: user.id, reason: reason ? reason : "" }))
+          dispatch(ban({ uid: user.uid, reason: reason ? reason : "" }))
         }}
       >
         <p style={{ margin: "0px" }}>{t("ban_user")}</p>
@@ -138,7 +155,7 @@ function OtherProfileActions({ resetSearch }) {
       <button
         className="bubbly red"
         onClick={() => {
-          dispatch(unban({ uid: user.id, name: user.name }))
+          dispatch(unban({ uid: user.uid, name: user.displayName }))
         }}
       >
         <p style={{ margin: "0px" }}>{t("unban_user")}</p>
@@ -151,8 +168,8 @@ function OtherProfileActions({ resetSearch }) {
         <button
           className="bubbly orange"
           onClick={() => {
-            dispatch(giveRole({ uid: user.id, role: profileRole }))
-            alert(`Role ${profileRole} given to ${user.name}`)
+            dispatch(giveRole({ uid: user.uid, role: profileRole }))
+            alert(`Role ${profileRole} given to ${user.displayName}`)
           }}
         >
           {t("give_role")}
@@ -178,8 +195,8 @@ function OtherProfileActions({ resetSearch }) {
         <button
           className="bubbly blue"
           onClick={() => {
-            dispatch(giveTitle({ uid: user.id, title: title }))
-            alert(`Title ${title} given to ${user.name}`)
+            dispatch(giveTitle({ uid: user.uid, title: title }))
+            alert(`Title ${title} given to ${user.displayName}`)
           }}
         >
           {t("give_title")}
@@ -202,6 +219,7 @@ function OtherProfileActions({ resetSearch }) {
   return role === Role.ADMIN || role === Role.MODERATOR ? (
     <>
       {giveButton}
+      {heapSnapshotButton}
       {roleButton}
       {titleButton}
       {banButton}

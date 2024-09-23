@@ -17,49 +17,36 @@ import { initCronJobs } from "./services/cronjobs"
 import { fetchLeaderboards } from "./services/leaderboard"
 
 async function main() {
-  initCronJobs()
   fetchLeaderboards()
-  
+  setInterval(() => fetchLeaderboards(), 1000 * 60 * 10) // refresh every 10 minutes
+
   if (process.env.NODE_APP_INSTANCE) {
     const processNumber = Number(process.env.NODE_APP_INSTANCE || "0")
     initializeMetrics()
     await listen(app)
     if (processNumber === 0) {
       await matchMaker.createRoom("lobby", {})
-      initializeLobby()
+      checkLobby()
+      initCronJobs()
     }
   } else {
     await listen(app, process.env.PORT ? parseInt(process.env.PORT) : 9000)
     await matchMaker.createRoom("lobby", {})
+    initCronJobs()
   }
 }
 
-function initializeLobby() {
-  logger.info("initializeLobby cron job")
+function checkLobby() {
+  logger.info("checkLobby cron job")
   CronJob.from({
-    cronTime: "0 */12 * * *", // every 12 hours
+    cronTime: "* * * * *",
     timeZone: "Europe/Paris",
     onTick: async () => {
       logger.debug(`Refresh lobby room`)
-      const query = await matchMaker.query({ name: "lobby" })
-      for (let i = 0; i < query.length; i++) {
-        try {
-          // Attempt to see if the room exit. If it exist, disconnect it
-          const disconnection = await matchMaker.remoteRoomCall(
-            query[i].roomId,
-            "disconnect",
-            [],
-            60000
-          )
-
-          logger.error("lobby disconected", disconnection)
-        } catch (error) {
-          logger.error(error)
-        } finally {
-          matchMaker.presence.hdel("roomcaches", query[i].roomId)
-        }
+      const lobbies = await matchMaker.query({ name: "lobby" })
+      if(lobbies.length === 0) {
+        matchMaker.createRoom("lobby", {})
       }
-      matchMaker.createRoom("lobby", {})
     },
     start: true
   })

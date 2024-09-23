@@ -18,6 +18,7 @@ import { Item } from "../../../types/enum/Item"
 import { Language } from "../../../types/enum/Language"
 import { PkmProposition } from "../../../types/enum/Pokemon"
 import { logger } from "../../../utils/logger"
+import { getAvatarString } from "../utils"
 
 export interface INetwork {
   client: Client
@@ -55,26 +56,26 @@ export const networkSlice = createSlice({
     logIn: (state, action: PayloadAction<User>) => {
       if (action.payload) {
         state.uid = action.payload.uid
-        state.displayName = action.payload.displayName
-          ? action.payload.displayName
-          : ""
+        state.displayName = action.payload.displayName ?? "Anonymous"
       }
     },
     logOut: (state) => {
       state.client = new Client(endpoint)
       state.uid = ""
-      state.displayName = ""
-      state.preparation?.connection.close()
+      state.preparation?.leave()
       state.preparation = undefined
-      state.lobby?.connection.close()
+      state.lobby?.leave()
       state.lobby = undefined
-      state.game?.connection.close()
+      state.game?.leave()
       state.game = undefined
-      state.after?.connection.close()
+      state.after?.leave()
       state.after = undefined
     },
     setProfile: (state, action: PayloadAction<IUserMetadata>) => {
       state.profile = action.payload
+      state.profile.pokemonCollection = new Map(
+        Object.entries(action.payload.pokemonCollection)
+      )
     },
     joinLobby: (state, action: PayloadAction<Room<ICustomLobbyState>>) => {
       state.lobby = action.payload
@@ -132,12 +133,19 @@ export const networkSlice = createSlice({
       state.lobby?.send(Transfer.SEARCH, { name: action.payload })
     },
     changeName: (state, action: PayloadAction<string>) => {
+      if (state.profile) state.profile.displayName = action.payload
       state.lobby?.send(Transfer.CHANGE_NAME, { name: action.payload })
     },
     changeAvatar: (
       state,
       action: PayloadAction<{ index: string; emotion: Emotion; shiny: boolean }>
     ) => {
+      if (state.profile)
+        state.profile.avatar = getAvatarString(
+          action.payload.index,
+          action.payload.shiny,
+          action.payload.emotion
+        )
       state.lobby?.send(Transfer.CHANGE_AVATAR, action.payload)
     },
     addBot: (state, action: PayloadAction<BotDifficulty | IBot>) => {
@@ -182,6 +190,15 @@ export const networkSlice = createSlice({
       state,
       action: PayloadAction<{ index: string; emotion: Emotion; shiny: boolean }>
     ) => {
+      if (state.profile) {
+        const pokemonConfig = state.profile.pokemonCollection.get(
+          action.payload.index
+        )
+        if (pokemonConfig) {
+          pokemonConfig.selectedEmotion = action.payload.emotion
+          pokemonConfig.selectedShiny = action.payload.shiny
+        }
+      }
       state.lobby?.send(Transfer.CHANGE_SELECTED_EMOTION, action.payload)
     },
     buyEmotion: (
@@ -202,7 +219,8 @@ export const networkSlice = createSlice({
     searchById: (state, action: PayloadAction<string>) => {
       state.lobby?.send(Transfer.SEARCH_BY_ID, action.payload)
     },
-    setTitle: (state, action: PayloadAction<string>) => {
+    setTitle: (state, action: PayloadAction<Title>) => {
+      if (state.profile) state.profile.title = action.payload
       state.lobby?.send(Transfer.SET_TITLE, action.payload)
     },
     removeTournament: (state, action: PayloadAction<{ id: string }>) => {
@@ -222,6 +240,9 @@ export const networkSlice = createSlice({
       action: PayloadAction<{ uid: string; numberOfBoosters: number }>
     ) => {
       state.lobby?.send(Transfer.GIVE_BOOSTER, action.payload)
+    },
+    heapSnapshot: (state) => {
+      state.lobby?.send(Transfer.HEAP_SNAPSHOT)
     },
     giveRole: (state, action: PayloadAction<{ uid: string; role: Role }>) => {
       state.lobby?.send(Transfer.SET_ROLE, action.payload)
@@ -259,13 +280,14 @@ export const networkSlice = createSlice({
     ) => {
       state.lobby?.send(Transfer.NEW_TOURNAMENT, action.payload)
     },
-    setNetworkError: (state, action: PayloadAction<string | null>) => {
+    setErrorAlertMessage: (state, action: PayloadAction<string | null>) => {
       state.error = action.payload
     }
   }
 })
 
 export const {
+  heapSnapshot,
   selectLanguage,
   unban,
   deleteBotDatabase,
@@ -311,7 +333,7 @@ export const {
   kick,
   deleteRoom,
   createTournament,
-  setNetworkError
+  setErrorAlertMessage
 } = networkSlice.actions
 
 export default networkSlice.reducer

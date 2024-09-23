@@ -3,7 +3,7 @@ import { logger } from "../utils/logger"
 import { nanoid } from "nanoid"
 import Count from "../models/colyseus-models/count"
 import Player from "../models/colyseus-models/player"
-import { Pokemon } from "../models/colyseus-models/pokemon"
+import { isOnBench, Pokemon } from "../models/colyseus-models/pokemon"
 import Status from "../models/colyseus-models/status"
 import PokemonFactory from "../models/pokemon-factory"
 import { getSellPrice } from "../models/shop"
@@ -485,15 +485,21 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
     apBoost: number,
     crit: boolean
   ) {
-    value =
-      value * (1 + (apBoost * caster.ap) / 100) * (crit ? caster.critPower : 1)
-    const currentAtkSpeedBonus = 100 * (this.atkSpeed / 0.75 - 1)
-    const atkSpeedBonus = currentAtkSpeedBonus + value
-    this.atkSpeed = clamp(
-      roundTo2Digits(0.75 * (1 + atkSpeedBonus / 100)),
-      0.4,
-      2.5
-    )
+    if (this.passive === Passive.MELMETAL) {
+      this.addAttack(value * 0.3, caster, apBoost, crit)
+    } else {
+      value =
+        value *
+        (1 + (apBoost * caster.ap) / 100) *
+        (crit ? caster.critPower : 1)
+      const currentAtkSpeedBonus = 100 * (this.atkSpeed / 0.75 - 1)
+      const atkSpeedBonus = currentAtkSpeedBonus + value
+      this.atkSpeed = clamp(
+        roundTo2Digits(0.75 * (1 + atkSpeedBonus / 100)),
+        0.4,
+        2.5
+      )
+    }
   }
 
   addPsychicField() {
@@ -609,6 +615,36 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
       }
     }
 
+    if (this.status.stoneEdge) {
+      const tg = board.getValue(target.positionX, target.positionY)
+      if (tg) {
+        tg.handleDamage({
+          damage: Math.round(this.def * (1 + this.ap / 100)),
+          board,
+          attackType: AttackType.SPECIAL,
+          attacker: this,
+          shouldTargetGainMana: true
+        })
+      }
+    }
+
+    if (this.passive === Passive.DURANT) {
+      const bugAllies =
+        board.cells.filter(
+          (entity) =>
+            entity && entity.team === this.team && entity.types.has(Synergy.BUG)
+        ).length - 1
+      if (bugAllies > 0) {
+        target.handleDamage({
+          damage: bugAllies,
+          board,
+          attackType: AttackType.TRUE,
+          attacker: this,
+          shouldTargetGainMana: true
+        })
+      }
+    }
+
     if (
       this.name === Pkm.MINIOR_KERNEL_BLUE ||
       this.name === Pkm.MINIOR_KERNEL_GREEN ||
@@ -629,7 +665,7 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
         })
         if (this.name === Pkm.MINIOR_KERNEL_BLUE) {
           t.handleDamage({
-            damage: physicalDamage,
+            damage: Math.ceil(physicalDamage * (1 + this.ap / 100)),
             board,
             attackType: AttackType.SPECIAL,
             attacker: this,
@@ -638,7 +674,7 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
         }
         if (this.name === Pkm.MINIOR_KERNEL_RED) {
           t.handleDamage({
-            damage: Math.ceil(physicalDamage * 1.5),
+            damage: Math.ceil(physicalDamage * 1.5 * (1 + this.ap / 100)),
             board,
             attackType: AttackType.PHYSICAL,
             attacker: this,
@@ -647,7 +683,7 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
         }
         if (this.name === Pkm.MINIOR_KERNEL_ORANGE) {
           t.handleDamage({
-            damage: Math.ceil(physicalDamage * 0.5),
+            damage: Math.ceil(physicalDamage * 0.5 * (1 + this.ap / 100)),
             board,
             attackType: AttackType.TRUE,
             attacker: this,
@@ -658,7 +694,7 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
       if (this.name === Pkm.MINIOR_KERNEL_GREEN) {
         cells.forEach((v) => {
           if (v && v.value && v.value.team === this.team) {
-            v.value.handleHeal(physicalDamage, this, 0, false)
+            v.value.handleHeal(physicalDamage, this, 1, false)
           }
         })
       }
@@ -804,7 +840,7 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
     }
 
     if (this.name === Pkm.MINIOR) {
-      this.addAttackSpeed(4, this, 1, false)
+      this.addAttackSpeed(5, this, 1, false)
     }
 
     if (this.name === Pkm.MORPEKO) {
@@ -860,13 +896,13 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
     if (this.types.has(Synergy.ICE)) {
       let freezeChance = 0
       if (this.effects.has(Effect.CHILLY)) {
-        freezeChance = 0.1
-      } else if (this.effects.has(Effect.FROSTY)) {
         freezeChance = 0.2
-      } else if (this.effects.has(Effect.FREEZING)) {
+      } else if (this.effects.has(Effect.FROSTY)) {
         freezeChance = 0.3
-      } else if (this.effects.has(Effect.SHEER_COLD)) {
+      } else if (this.effects.has(Effect.FREEZING)) {
         freezeChance = 0.4
+      } else if (this.effects.has(Effect.SHEER_COLD)) {
+        freezeChance = 0.5
       }
       if (chance(freezeChance)) {
         target.status.triggerFreeze(2000, target)
@@ -878,13 +914,13 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
       if (this.effects.has(Effect.BLAZE)) {
         burnChance = 0.3
       } else if (this.effects.has(Effect.VICTORY_STAR)) {
-        burnChance = 0.4
+        burnChance = 0.3
         this.addAttack(1, this, 0, false)
       } else if (this.effects.has(Effect.DROUGHT)) {
-        burnChance = 0.5
+        burnChance = 0.3
         this.addAttack(2, this, 0, false)
       } else if (this.effects.has(Effect.DESOLATE_LAND)) {
-        burnChance = 1
+        burnChance = 0.3
         this.addAttack(3, this, 0, false)
       }
       if (chance(burnChance)) {
@@ -1261,7 +1297,7 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
     }
 
     if (this.items.has(Item.AMULET_COIN) && this.player) {
-      this.player.money += 1
+      this.player.addMoney(1)
       this.count.moneyCount += 1
       this.count.amuletCoinCount += 1
     }
@@ -1270,8 +1306,9 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
       const isLastEnemy =
         board.cells.some((p) => p && p.team !== this.team && p.life > 0) ===
         false
-      this.player.money += isLastEnemy ? 5 : 1
-      this.count.moneyCount += isLastEnemy ? 5 : 1
+      const moneyGained = isLastEnemy ? 5 : 1
+      this.player.addMoney(moneyGained)
+      this.count.moneyCount += moneyGained
     }
 
     if (
@@ -1516,17 +1553,14 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
   }
 
   resurrect() {
-    const cloneForStatsReference = PokemonFactory.createPokemonFromName(
-      this.name
-    )
-    this.life = cloneForStatsReference.hp
+    this.life = this.refToBoardPokemon.hp
     this.shield = 0
     this.pp = 0
     this.ap = 0
-    this.atk = cloneForStatsReference.atk
-    this.def = cloneForStatsReference.def
-    this.speDef = cloneForStatsReference.speDef
-    this.atkSpeed = cloneForStatsReference.atkSpeed
+    this.atk = this.refToBoardPokemon.atk
+    this.def = this.refToBoardPokemon.def
+    this.speDef = this.refToBoardPokemon.speDef
+    this.atkSpeed = this.refToBoardPokemon.atkSpeed
     this.critChance = DEFAULT_CRIT_CHANCE
     this.critPower = DEFAULT_CRIT_POWER
     this.count = new Count()
@@ -1542,6 +1576,7 @@ export class PokemonEntity extends Schema implements IPokemonEntity {
         const koAllies = values(this.player.board).filter(
           (p) =>
             p.id !== this.refToBoardPokemon.id &&
+            !isOnBench(p) &&
             alliesAlive.includes(p.id) === false
         )
 
